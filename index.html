@@ -4,11 +4,445 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Baby Cry Detector</title>
-    <link rel="manifest" href="manifest.json">
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f9f7ff;
+            color: #333;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 600px;
+            width: 100%;
+            background-color: white;
+            border-radius: 12px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            padding: 24px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #6a5acd;
+            text-align: center;
+            margin-top: 0;
+        }
+        
+        .status {
+            text-align: center;
+            font-size: 18px;
+            margin: 20px 0;
+        }
+        
+        .controls {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            align-items: center;
+        }
+        
+        button {
+            background-color: #6a5acd;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 30px;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            width: 200px;
+        }
+        
+        button:hover {
+            background-color: #5a4abd;
+        }
+        
+        button:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        
+        .visualizer {
+            width: 100%;
+            height: 150px;
+            background-color: #f5f5f5;
+            border-radius: 8px;
+            margin-top: 20px;
+            overflow: hidden;
+        }
+        
+        canvas {
+            width: 100%;
+            height: 100%;
+        }
+        
+        .alert {
+            background-color: #ff6b6b;
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+            margin-top: 20px;
+            display: none;
+        }
+        
+        .alert.active {
+            display: block;
+            animation: pulse 1.5s infinite;
+        }
+        
+        .settings {
+            margin-top: 20px;
+            width: 100%;
+        }
+        
+        .settings-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+        }
+        
+        .history {
+            margin-top: 20px;
+            width: 100%;
+        }
+        
+        .history-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+        }
+        
+        @keyframes pulse {
+            0% {
+                transform: scale(1);
+            }
+            50% {
+                transform: scale(1.05);
+            }
+            100% {
+                transform: scale(1);
+            }
+        }
+        
+        .sensitivity-slider {
+            width: 100%;
+            margin: 10px 0;
+        }
+        
+        @media (max-width: 480px) {
+            .container {
+                padding: 16px;
+            }
+            
+            h1 {
+                font-size: 24px;
+            }
+        }
+    </style>
 </head>
 <body>
-    <h1>Baby Cry Detector</h1>
-    <button id="start">Start Listening</button>
-    <script src="app.js"></script>
+    <div class="container">
+        <h1>Baby Cry Detector</h1>
+        
+        <div id="status" class="status">Allow microphone access to begin</div>
+        
+        <div class="controls">
+            <button id="startButton">Start Listening</button>
+            <button id="stopButton" disabled>Stop Listening</button>
+        </div>
+        
+        <div class="visualizer">
+            <canvas id="audioVisualizer"></canvas>
+        </div>
+        
+        <div id="cryAlert" class="alert">Baby cry detected!</div>
+        
+        <div class="settings">
+            <h3>Settings</h3>
+            <div class="settings-row">
+                <label for="sensitivity">Sensitivity:</label>
+                <input type="range" id="sensitivity" class="sensitivity-slider" min="1" max="10" value="6">
+                <span id="sensitivityValue">6</span>
+            </div>
+            <div class="settings-row">
+                <label for="minFreq">Frequency Range:</label>
+                <select id="frequencyRange">
+                    <option value="narrow">Narrow (typical cry focus)</option>
+                    <option value="wide" selected>Wide (detect various cries)</option>
+                    <option value="custom">Custom</option>
+                </select>
+            </div>
+        </div>
+        
+        <div class="history">
+            <h3>Detection History</h3>
+            <div id="detectionHistory"></div>
+        </div>
+    </div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const startButton = document.getElementById('startButton');
+            const stopButton = document.getElementById('stopButton');
+            const statusElement = document.getElementById('status');
+            const cryAlert = document.getElementById('cryAlert');
+            const canvas = document.getElementById('audioVisualizer');
+            const sensitivitySlider = document.getElementById('sensitivity');
+            const sensitivityValue = document.getElementById('sensitivityValue');
+            const frequencyRangeSelect = document.getElementById('frequencyRange');
+            const detectionHistory = document.getElementById('detectionHistory');
+            
+            let audioContext;
+            let analyser;
+            let microphone;
+            let javascriptNode;
+            let canvasContext = canvas.getContext('2d');
+            let animationId;
+            let isListening = false;
+            
+            // Configuration
+            let sensitivity = 6;
+            let detectionThreshold = 0.5 + (sensitivity * 0.05);
+            let frequencyRanges = {
+                narrow: { low: 1000, high: 2000 },  // Focus on typical baby cry frequency
+                wide: { low: 400, high: 3000 },     // Wider range for various cry types
+                custom: { low: 300, high: 4000 }    // Custom range
+            };
+            let selectedRange = 'wide';
+            
+            // Update sensitivity value display
+            sensitivitySlider.addEventListener('input', function() {
+                sensitivity = parseInt(this.value);
+                sensitivityValue.textContent = sensitivity;
+                detectionThreshold = 0.5 + (sensitivity * 0.05);
+            });
+            
+            // Update frequency range
+            frequencyRangeSelect.addEventListener('change', function() {
+                selectedRange = this.value;
+            });
+            
+            // Start detection
+            startButton.addEventListener('click', function() {
+                if (!isListening) {
+                    startAudioDetection();
+                }
+            });
+            
+            // Stop detection
+            stopButton.addEventListener('click', function() {
+                if (isListening) {
+                    stopAudioDetection();
+                }
+            });
+            
+            // Begin audio detection
+            function startAudioDetection() {
+                if (!navigator.mediaDevices) {
+                    updateStatus('Media devices not supported in this browser', true);
+                    return;
+                }
+                
+                updateStatus('Starting...', false);
+                
+                // Create audio context
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                analyser = audioContext.createAnalyser();
+                
+                // Configure analyzer
+                analyser.fftSize = 2048;
+                analyser.smoothingTimeConstant = 0.8;
+                
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(function(stream) {
+                        microphone = audioContext.createMediaStreamSource(stream);
+                        microphone.connect(analyser);
+                        
+                        // Setup JavaScript processing node
+                        javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+                        analyser.connect(javascriptNode);
+                        javascriptNode.connect(audioContext.destination);
+                        
+                        // Process audio data
+                        javascriptNode.onaudioprocess = analyzeAudio;
+                        
+                        // Start visualization
+                        visualize();
+                        
+                        isListening = true;
+                        startButton.disabled = true;
+                        stopButton.disabled = false;
+                        updateStatus('Listening for baby cries...', false);
+                    })
+                    .catch(function(err) {
+                        updateStatus('Could not access microphone: ' + err.message, true);
+                    });
+            }
+            
+            // Stop audio detection
+            function stopAudioDetection() {
+                if (javascriptNode) {
+                    javascriptNode.onaudioprocess = null;
+                    javascriptNode.disconnect();
+                    analyser.disconnect();
+                    microphone.disconnect();
+                    cancelAnimationFrame(animationId);
+                    
+                    isListening = false;
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    updateStatus('Monitoring stopped', false);
+                    cryAlert.classList.remove('active');
+                }
+            }
+            
+            // Analyze audio for baby cry patterns
+            function analyzeAudio(event) {
+                const bufferLength = analyser.frequencyBinCount;
+                const dataArray = new Uint8Array(bufferLength);
+                analyser.getByteFrequencyData(dataArray);
+                
+                // Focus on specific frequency ranges for baby cries
+                const range = frequencyRanges[selectedRange];
+                
+                // Convert frequency to array index (rough approximation)
+                const lowIndex = Math.floor(range.low * bufferLength / (audioContext.sampleRate / 2));
+                const highIndex = Math.floor(range.high * bufferLength / (audioContext.sampleRate / 2));
+                
+                // Analyze energy in the frequency range of interest
+                let sum = 0;
+                for (let i = lowIndex; i < highIndex; i++) {
+                    sum += dataArray[i];
+                }
+                
+                // Calculate average energy
+                const avg = sum / (highIndex - lowIndex);
+                const normalizedValue = avg / 255;
+                
+                // Baby cry detection based on threshold and frequency characteristics
+                if (normalizedValue > detectionThreshold) {
+                    // Look for rapid changes in amplitude (common in cries)
+                    const isPotentialCry = detectCryPattern(dataArray, lowIndex, highIndex);
+                    
+                    if (isPotentialCry) {
+                        cryDetected();
+                    } else {
+                        cryAlert.classList.remove('active');
+                    }
+                } else {
+                    cryAlert.classList.remove('active');
+                }
+            }
+            
+            // Simple pattern detection algorithm for baby cries
+            function detectCryPattern(dataArray, lowIndex, highIndex) {
+                // Count peaks in the frequency range
+                let peakCount = 0;
+                let isRising = false;
+                
+                for (let i = lowIndex + 1; i < highIndex; i++) {
+                    if (!isRising && dataArray[i] > dataArray[i-1] + 10) {
+                        isRising = true;
+                    } else if (isRising && dataArray[i] < dataArray[i-1] - 10) {
+                        peakCount++;
+                        isRising = false;
+                    }
+                }
+                
+                // Baby cries often have multiple peaks in the frequency domain
+                return peakCount >= 3;
+            }
+            
+            // Handle cry detection
+            function cryDetected() {
+                cryAlert.classList.add('active');
+                
+                // Add to history
+                const now = new Date();
+                const timeString = now.toLocaleTimeString();
+                const historyItem = document.createElement('div');
+                historyItem.className = 'history-item';
+                historyItem.innerHTML = `
+                    <span>Cry detected</span>
+                    <span>${timeString}</span>
+                `;
+                detectionHistory.prepend(historyItem);
+                
+                // Limit history items
+                if (detectionHistory.children.length > 10) {
+                    detectionHistory.removeChild(detectionHistory.lastChild);
+                }
+            }
+            
+            // Visualize audio
+            function visualize() {
+                const WIDTH = canvas.width;
+                const HEIGHT = canvas.height;
+                
+                canvasContext.clearRect(0, 0, WIDTH, HEIGHT);
+                
+                function draw() {
+                    animationId = requestAnimationFrame(draw);
+                    
+                    const bufferLength = analyser.frequencyBinCount;
+                    const dataArray = new Uint8Array(bufferLength);
+                    
+                    analyser.getByteFrequencyData(dataArray);
+                    
+                    canvasContext.fillStyle = 'rgb(245, 245, 245)';
+                    canvasContext.fillRect(0, 0, WIDTH, HEIGHT);
+                    
+                    const barWidth = (WIDTH / bufferLength) * 2.5;
+                    let x = 0;
+                    
+                    for (let i = 0; i < bufferLength; i++) {
+                        const barHeight = dataArray[i] / 255 * HEIGHT;
+                        
+                        // Color based on frequency
+                        const h = i / bufferLength * 360;
+                        canvasContext.fillStyle = `hsl(${h}, 70%, 60%)`;
+                        
+                        canvasContext.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+                        
+                        x += barWidth + 1;
+                    }
+                }
+                
+                draw();
+            }
+            
+            // Update status message
+            function updateStatus(message, isError) {
+                statusElement.textContent = message;
+                statusElement.style.color = isError ? '#ff6b6b' : '#333';
+            }
+            
+            // Handle visibility change (pause when tab is not visible)
+            document.addEventListener('visibilitychange', function() {
+                if (document.hidden && isListening) {
+                    updateStatus('Paused (app in background)', false);
+                } else if (isListening) {
+                    updateStatus('Listening for baby cries...', false);
+                }
+            });
+            
+            // Resize canvas to match container
+            function resizeCanvas() {
+                canvas.width = canvas.offsetWidth;
+                canvas.height = canvas.offsetHeight;
+            }
+            
+            window.addEventListener('resize', resizeCanvas);
+            resizeCanvas();
+        });
+    </script>
 </body>
 </html>
