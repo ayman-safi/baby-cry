@@ -1,64 +1,37 @@
-// Request permissions and start listening when the button is clicked
-document.getElementById("start").addEventListener("click", async () => {
-    await Notification.requestPermission();
-    await requestWakeLock();
-    startListening();
-});
-
-// Start listening to the microphone
-async function startListening() {
-    try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const audioContext = new AudioContext();
-        const analyser = audioContext.createAnalyser();
-        const microphone = audioContext.createMediaStreamSource(stream);
-        microphone.connect(analyser);
-
-        const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-        function detectCry() {
-            analyser.getByteFrequencyData(dataArray);
-            let volume = dataArray.reduce((a, b) => a + b, 0) / dataArray.length;
-
-            if (volume > 50) { // Adjust this threshold
-                sendNotification();
-            }
-
-            requestAnimationFrame(detectCry);
-        }
-
-        detectCry();
-    } catch (error) {
-        console.error("Error accessing microphone:", error);
-    }
-}
-
-// Send a browser notification
-function sendNotification() {
-    if (Notification.permission === "granted") {
-        new Notification("Baby Crying Alert!", {
-            body: "Your baby might be crying. Check on them!",
-        });
-    }
-}
-
 // Register Service Worker
-if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("sw.js")
-        .then(() => console.log("Service Worker Registered"))
-        .catch(error => console.log("Service Worker Registration Failed", error));
+if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./service-worker.js', { scope: './' })
+        .then(reg => {
+            console.log('[App] Service Worker Registered:', reg);
+            return navigator.serviceWorker.ready;
+        })
+        .then(reg => {
+            console.log('[App] Service Worker Ready:', reg);
+        })
+        .catch(error => console.error('[App] Service Worker Registration Failed:', error));
+} else {
+    console.warn('[App] Service Worker not supported in this browser.');
 }
 
-// Enable Wake Lock to keep the screen on
-let wakeLock = null;
+// Request Notification Permission
+if ('Notification' in window) {
+    Notification.requestPermission().then(permission => {
+        console.log('[App] Notification Permission:', permission);
+    });
+} else {
+    console.warn('[App] Notifications not supported.');
+}
 
-async function requestWakeLock() {
-    if ('wakeLock' in navigator) {
-        try {
-            wakeLock = await navigator.wakeLock.request('screen');
-            console.log('Wake Lock activated');
-        } catch (err) {
-            console.log(`Wake Lock error: ${err.name}, ${err.message}`);
-        }
+// Send Test Notification
+function sendNotification() {
+    if (Notification.permission === 'granted') {
+        navigator.serviceWorker.getRegistration().then(reg => {
+            reg.showNotification('Baby Cry Detected!', {
+                body: 'Your baby is crying!',
+                icon: 'icon.png'
+            });
+        });
+    } else {
+        console.warn('[App] Notifications not allowed.');
     }
 }
