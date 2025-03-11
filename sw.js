@@ -12,6 +12,5 @@ self.addEventListener("fetch", () => {});
 self.addEventListener("push", (event) => {
     self.registration.showNotification("Baby Crying Alert!", {
         body: "Your baby might be crying. Check on them!",
-        icon: "https://example.com/baby-icon.png",
     });
 });

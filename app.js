@@ -38,7 +38,6 @@ function sendNotification() {
     if (Notification.permission === "granted") {
         new Notification("Baby Crying Alert!", {
             body: "Your baby might be crying. Check on them!",
-            icon: "https://example.com/baby-icon.png" // Optional
         });
     }
 }
