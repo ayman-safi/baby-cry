@@ -212,7 +212,7 @@ document.addEventListener('DOMContentLoaded', function() {
     
 // Configuration with increased sensitivity
 let sensitivity = 1; 
-let detectionThreshold = 0.4 + (sensitivity * 0.04); // Lower base threshold (0.4 instead of 0.5)
+let detectionThreshold = 0.1 + (sensitivity * 0.02); // Lower base threshold (0.4 instead of 0.5)
 let frequencyRanges = {
     narrow: { low: 800, high: 2200 },  // Expanded narrow range
     wide: { low: 300, high: 4000 },    // Wider detection range
@@ -238,7 +238,8 @@ sensitivityValue.textContent = sensitivity;
 sensitivitySlider.addEventListener('input', function() {
     sensitivity = parseInt(this.value);
     sensitivityValue.textContent = sensitivity;
-    detectionThreshold = 0.4 + (sensitivity * 0.04); // More sensitive formula
+    let detectionThreshold = 0.25 + (sensitivity * 0.025); // Lower base threshold (0.4 instead of 0.5)
+
 });
     // Update frequency range
     frequencyRangeSelect.addEventListener('change', function() {
