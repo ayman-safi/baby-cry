@@ -220,36 +220,13 @@ document.addEventListener('DOMContentLoaded', function() {
     };
     let selectedRange = 'wide';
     
-    // Check and request notification permission immediately
-    if ("Notification" in window) {
-        if (Notification.permission === "granted") {
-            console.log("Notifications already allowed");
-        } else if (Notification.permission !== "denied") {
-            // Request permission on page load
-            Notification.requestPermission().then(function(permission) {
-                if (permission === "granted") {
-                    console.log("Notification permission granted");
-                    // Send a test notification
-                    sendTestNotification();
-                }
-            });
-        }
-    } else {
-        console.warn("This browser does not support notifications");
-        updateStatus("This browser does not support notifications", true);
-    }
-    
-    // Test notification function
-    function sendTestNotification() {
-        try {
-            const testNotification = new Notification("Test Notification", {
-                body: "Notifications are working correctly",
-                icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%236a5acd'/%3E%3Cpath d='M8 14s1.5 2 4 2 4-2 4-2' stroke='white' stroke-width='1.5' fill='none'/%3E%3Ccircle cx='9' cy='9' r='1.5' fill='white'/%3E%3Ccircle cx='15' cy='9' r='1.5' fill='white'/%3E%3C/svg%3E"
-            });
-            console.log("Test notification sent");
-        } catch (error) {
-            console.error("Error sending test notification:", error);
-        }
+    // Check if service worker is supported for mobile notifications
+    if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('sw.js').then(function(registration) {
+            console.log('ServiceWorker registration successful');
+        }).catch(function(err) {
+            console.log('ServiceWorker registration failed: ', err);
+        });
     }
     
     // Update sensitivity value display
@@ -267,13 +244,9 @@ document.addEventListener('DOMContentLoaded', function() {
     // Start detection
     startButton.addEventListener('click', function() {
         if (!isListening) {
-            // Force request notification permission when starting
+            // Request notification permission
             if ("Notification" in window && Notification.permission !== "granted") {
-                Notification.requestPermission().then(function(permission) {
-                    if (permission === "granted") {
-                        console.log("Notification permission granted on start");
-                    }
-                });
+                Notification.requestPermission();
             }
             startAudioDetection();
         }
@@ -403,8 +376,8 @@ document.addEventListener('DOMContentLoaded', function() {
         return peakCount >= 3;
     }
     
-    // Send browser notification for cry detection
-    function sendCryNotification() {
+    // Send browser notification
+    function sendNotification() {
         // Check for cooldown to avoid spam
         const now = Date.now();
         if (now - lastNotificationTime < notificationCooldown) {
@@ -415,34 +388,35 @@ document.addEventListener('DOMContentLoaded', function() {
         
         // Check if notifications are supported and permitted
         if (!("Notification" in window)) {
-            console.warn("Notifications not supported");
             return;
         }
         
         if (Notification.permission !== "granted") {
-            console.warn("Notification permission not granted");
-            Notification.requestPermission();
             return;
         }
         
-        // Create and send notification
-        try {
-            const notification = new Notification("Baby Cry Detected!", {
-                body: "Your baby might be crying. Please check.",
-                icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23ff6b6b'/%3E%3Cpath d='M9 9q0.5 0.5 0 1-0.5 0.5-1 0t0-1 1 0M15 9q0.5 0.5 0 1-0.5 0.5-1 0t0-1 1 0M9 16q3-2 6 0' stroke='white' stroke-width='1.5' fill='none'/%3E%3C/svg%3E",
-                vibrate: [200, 100, 200],
-                tag: "babycry"
+        // For mobile notifications
+        if ('serviceWorker' in navigator && 'PushManager' in window) {
+            navigator.serviceWorker.ready.then(function(registration) {
+                registration.showNotification('Baby Cry Detected!', {
+                    body: 'Your baby might be crying. Please check.',
+                    icon: '/icon.png',
+                    vibrate: [200, 100, 200],
+                    tag: 'babycry'
+                });
             });
-            
-            console.log("Cry notification sent");
-            
-            // Handle notification click
-            notification.onclick = function() {
-                window.focus();
-                this.close();
-            };
-        } catch (error) {
-            console.error("Error sending notification:", error);
+        } else {
+            // Fallback to standard notification
+            try {
+                new Notification('Baby Cry Detected!', {
+                    body: 'Your baby might be crying. Please check.',
+                    icon: '/icon.png',
+                    vibrate: [200, 100, 200],
+                    tag: 'babycry'
+                });
+            } catch (error) {
+                console.error("Error sending notification:", error);
+            }
         }
     }
     
@@ -451,7 +425,7 @@ document.addEventListener('DOMContentLoaded', function() {
         cryAlert.classList.add('active');
         
         // Send browser notification
-        sendCryNotification();
+        sendNotification();
         
         // Add to history
         const now = new Date();
@@ -469,25 +443,6 @@ document.addEventListener('DOMContentLoaded', function() {
             detectionHistory.removeChild(detectionHistory.lastChild);
         }
     }
-    
-    // Add a manual test button for notifications
-    const testButton = document.createElement('button');
-    testButton.textContent = 'Test Notification';
-    testButton.style.marginTop = '10px';
-    testButton.addEventListener('click', function() {
-        if ("Notification" in window) {
-            if (Notification.permission === "granted") {
-                sendTestNotification();
-            } else {
-                Notification.requestPermission().then(function(permission) {
-                    if (permission === "granted") {
-                        sendTestNotification();
-                    }
-                });
-            }
-        }
-    });
-    document.querySelector('.controls').appendChild(testButton);
     
     // Visualize audio
     function visualize() {
@@ -532,6 +487,15 @@ document.addEventListener('DOMContentLoaded', function() {
         statusElement.style.color = isError ? '#ff6b6b' : '#333';
     }
     
+    // Keep monitoring in background
+    document.addEventListener('visibilitychange', function() {
+        if (document.hidden && isListening) {
+            updateStatus('Monitoring in background', false);
+        } else if (isListening) {
+            updateStatus('Listening for baby cries...', false);
+        }
+    });
+    
     // Resize canvas to match container
     function resizeCanvas() {
         canvas.width = canvas.offsetWidth;
@@ -541,6 +505,7 @@ document.addEventListener('DOMContentLoaded', function() {
     window.addEventListener('resize', resizeCanvas);
     resizeCanvas();
 });
-    </script>
+
+   </script>
 </body>
 </html>
