@@ -183,7 +183,7 @@
         </div>
         
         <div class="history">
-            <h3>Detection History </h3>
+            <h3>Detection History</h3>
             <div id="detectionHistory"></div>
         </div>
     </div>
@@ -211,7 +211,7 @@ document.addEventListener('DOMContentLoaded', function() {
     const notificationCooldown = 5000; // 5 seconds between notifications
     
 // Configuration with increased sensitivity
-let sensitivity = 8; // Increased from 6 to 8 as default
+let sensitivity = 1; 
 let detectionThreshold = 0.4 + (sensitivity * 0.04); // Lower base threshold (0.4 instead of 0.5)
 let frequencyRanges = {
     narrow: { low: 800, high: 2200 },  // Expanded narrow range
