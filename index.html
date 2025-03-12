@@ -189,260 +189,358 @@
     </div>
     
     <script>
-        document.addEventListener('DOMContentLoaded', function() {
-            const startButton = document.getElementById('startButton');
-            const stopButton = document.getElementById('stopButton');
-            const statusElement = document.getElementById('status');
-            const cryAlert = document.getElementById('cryAlert');
-            const canvas = document.getElementById('audioVisualizer');
-            const sensitivitySlider = document.getElementById('sensitivity');
-            const sensitivityValue = document.getElementById('sensitivityValue');
-            const frequencyRangeSelect = document.getElementById('frequencyRange');
-            const detectionHistory = document.getElementById('detectionHistory');
+document.addEventListener('DOMContentLoaded', function() {
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const statusElement = document.getElementById('status');
+    const cryAlert = document.getElementById('cryAlert');
+    const canvas = document.getElementById('audioVisualizer');
+    const sensitivitySlider = document.getElementById('sensitivity');
+    const sensitivityValue = document.getElementById('sensitivityValue');
+    const frequencyRangeSelect = document.getElementById('frequencyRange');
+    const detectionHistory = document.getElementById('detectionHistory');
+    
+    let audioContext;
+    let analyser;
+    let microphone;
+    let javascriptNode;
+    let canvasContext = canvas.getContext('2d');
+    let animationId;
+    let isListening = false;
+    let lastNotificationTime = 0;
+    const notificationCooldown = 5000; // 5 seconds between notifications
+    
+    // Configuration
+    let sensitivity = 6;
+    let detectionThreshold = 0.5 + (sensitivity * 0.05);
+    let frequencyRanges = {
+        narrow: { low: 1000, high: 2000 },  // Focus on typical baby cry frequency
+        wide: { low: 400, high: 3000 },     // Wider range for various cry types
+        custom: { low: 300, high: 4000 }    // Custom range
+    };
+    let selectedRange = 'wide';
+    
+    // Check and request notification permission immediately
+    if ("Notification" in window) {
+        if (Notification.permission === "granted") {
+            console.log("Notifications already allowed");
+        } else if (Notification.permission !== "denied") {
+            // Request permission on page load
+            Notification.requestPermission().then(function(permission) {
+                if (permission === "granted") {
+                    console.log("Notification permission granted");
+                    // Send a test notification
+                    sendTestNotification();
+                }
+            });
+        }
+    } else {
+        console.warn("This browser does not support notifications");
+        updateStatus("This browser does not support notifications", true);
+    }
+    
+    // Test notification function
+    function sendTestNotification() {
+        try {
+            const testNotification = new Notification("Test Notification", {
+                body: "Notifications are working correctly",
+                icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%236a5acd'/%3E%3Cpath d='M8 14s1.5 2 4 2 4-2 4-2' stroke='white' stroke-width='1.5' fill='none'/%3E%3Ccircle cx='9' cy='9' r='1.5' fill='white'/%3E%3Ccircle cx='15' cy='9' r='1.5' fill='white'/%3E%3C/svg%3E"
+            });
+            console.log("Test notification sent");
+        } catch (error) {
+            console.error("Error sending test notification:", error);
+        }
+    }
+    
+    // Update sensitivity value display
+    sensitivitySlider.addEventListener('input', function() {
+        sensitivity = parseInt(this.value);
+        sensitivityValue.textContent = sensitivity;
+        detectionThreshold = 0.5 + (sensitivity * 0.05);
+    });
+    
+    // Update frequency range
+    frequencyRangeSelect.addEventListener('change', function() {
+        selectedRange = this.value;
+    });
+    
+    // Start detection
+    startButton.addEventListener('click', function() {
+        if (!isListening) {
+            // Force request notification permission when starting
+            if ("Notification" in window && Notification.permission !== "granted") {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === "granted") {
+                        console.log("Notification permission granted on start");
+                    }
+                });
+            }
+            startAudioDetection();
+        }
+    });
+    
+    // Stop detection
+    stopButton.addEventListener('click', function() {
+        if (isListening) {
+            stopAudioDetection();
+        }
+    });
+    
+    // Begin audio detection
+    function startAudioDetection() {
+        if (!navigator.mediaDevices) {
+            updateStatus('Media devices not supported in this browser', true);
+            return;
+        }
+        
+        updateStatus('Starting...', false);
+        
+        // Create audio context
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyser = audioContext.createAnalyser();
+        
+        // Configure analyzer
+        analyser.fftSize = 2048;
+        analyser.smoothingTimeConstant = 0.8;
+        
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(function(stream) {
+                microphone = audioContext.createMediaStreamSource(stream);
+                microphone.connect(analyser);
+                
+                // Setup JavaScript processing node
+                javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+                analyser.connect(javascriptNode);
+                javascriptNode.connect(audioContext.destination);
+                
+                // Process audio data
+                javascriptNode.onaudioprocess = analyzeAudio;
+                
+                // Start visualization
+                visualize();
+                
+                isListening = true;
+                startButton.disabled = true;
+                stopButton.disabled = false;
+                updateStatus('Listening for baby cries...', false);
+            })
+            .catch(function(err) {
+                updateStatus('Could not access microphone: ' + err.message, true);
+            });
+    }
+    
+    // Stop audio detection
+    function stopAudioDetection() {
+        if (javascriptNode) {
+            javascriptNode.onaudioprocess = null;
+            javascriptNode.disconnect();
+            analyser.disconnect();
+            microphone.disconnect();
+            cancelAnimationFrame(animationId);
             
-            let audioContext;
-            let analyser;
-            let microphone;
-            let javascriptNode;
-            let canvasContext = canvas.getContext('2d');
-            let animationId;
-            let isListening = false;
+            isListening = false;
+            startButton.disabled = false;
+            stopButton.disabled = true;
+            updateStatus('Monitoring stopped', false);
+            cryAlert.classList.remove('active');
+        }
+    }
+    
+    // Analyze audio for baby cry patterns
+    function analyzeAudio(event) {
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        analyser.getByteFrequencyData(dataArray);
+        
+        // Focus on specific frequency ranges for baby cries
+        const range = frequencyRanges[selectedRange];
+        
+        // Convert frequency to array index (rough approximation)
+        const lowIndex = Math.floor(range.low * bufferLength / (audioContext.sampleRate / 2));
+        const highIndex = Math.floor(range.high * bufferLength / (audioContext.sampleRate / 2));
+        
+        // Analyze energy in the frequency range of interest
+        let sum = 0;
+        for (let i = lowIndex; i < highIndex; i++) {
+            sum += dataArray[i];
+        }
+        
+        // Calculate average energy
+        const avg = sum / (highIndex - lowIndex);
+        const normalizedValue = avg / 255;
+        
+        // Baby cry detection based on threshold and frequency characteristics
+        if (normalizedValue > detectionThreshold) {
+            // Look for rapid changes in amplitude (common in cries)
+            const isPotentialCry = detectCryPattern(dataArray, lowIndex, highIndex);
             
-            // Configuration
-            let sensitivity = 6;
-            let detectionThreshold = 0.5 + (sensitivity * 0.05);
-            let frequencyRanges = {
-                narrow: { low: 1000, high: 2000 },  // Focus on typical baby cry frequency
-                wide: { low: 400, high: 3000 },     // Wider range for various cry types
-                custom: { low: 300, high: 4000 }    // Custom range
+            if (isPotentialCry) {
+                cryDetected();
+            } else {
+                cryAlert.classList.remove('active');
+            }
+        } else {
+            cryAlert.classList.remove('active');
+        }
+    }
+    
+    // Simple pattern detection algorithm for baby cries
+    function detectCryPattern(dataArray, lowIndex, highIndex) {
+        // Count peaks in the frequency range
+        let peakCount = 0;
+        let isRising = false;
+        
+        for (let i = lowIndex + 1; i < highIndex; i++) {
+            if (!isRising && dataArray[i] > dataArray[i-1] + 10) {
+                isRising = true;
+            } else if (isRising && dataArray[i] < dataArray[i-1] - 10) {
+                peakCount++;
+                isRising = false;
+            }
+        }
+        
+        // Baby cries often have multiple peaks in the frequency domain
+        return peakCount >= 3;
+    }
+    
+    // Send browser notification for cry detection
+    function sendCryNotification() {
+        // Check for cooldown to avoid spam
+        const now = Date.now();
+        if (now - lastNotificationTime < notificationCooldown) {
+            return;
+        }
+        
+        lastNotificationTime = now;
+        
+        // Check if notifications are supported and permitted
+        if (!("Notification" in window)) {
+            console.warn("Notifications not supported");
+            return;
+        }
+        
+        if (Notification.permission !== "granted") {
+            console.warn("Notification permission not granted");
+            Notification.requestPermission();
+            return;
+        }
+        
+        // Create and send notification
+        try {
+            const notification = new Notification("Baby Cry Detected!", {
+                body: "Your baby might be crying. Please check.",
+                icon: "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='10' fill='%23ff6b6b'/%3E%3Cpath d='M9 9q0.5 0.5 0 1-0.5 0.5-1 0t0-1 1 0M15 9q0.5 0.5 0 1-0.5 0.5-1 0t0-1 1 0M9 16q3-2 6 0' stroke='white' stroke-width='1.5' fill='none'/%3E%3C/svg%3E",
+                vibrate: [200, 100, 200],
+                tag: "babycry"
+            });
+            
+            console.log("Cry notification sent");
+            
+            // Handle notification click
+            notification.onclick = function() {
+                window.focus();
+                this.close();
             };
-            let selectedRange = 'wide';
-            
-            // Update sensitivity value display
-            sensitivitySlider.addEventListener('input', function() {
-                sensitivity = parseInt(this.value);
-                sensitivityValue.textContent = sensitivity;
-                detectionThreshold = 0.5 + (sensitivity * 0.05);
-            });
-            
-            // Update frequency range
-            frequencyRangeSelect.addEventListener('change', function() {
-                selectedRange = this.value;
-            });
-            
-            // Start detection
-            startButton.addEventListener('click', function() {
-                if (!isListening) {
-                    startAudioDetection();
-                }
-            });
-            
-            // Stop detection
-            stopButton.addEventListener('click', function() {
-                if (isListening) {
-                    stopAudioDetection();
-                }
-            });
-            
-            // Begin audio detection
-            function startAudioDetection() {
-                if (!navigator.mediaDevices) {
-                    updateStatus('Media devices not supported in this browser', true);
-                    return;
-                }
-                
-                updateStatus('Starting...', false);
-                
-                // Create audio context
-                audioContext = new (window.AudioContext || window.webkitAudioContext)();
-                analyser = audioContext.createAnalyser();
-                
-                // Configure analyzer
-                analyser.fftSize = 2048;
-                analyser.smoothingTimeConstant = 0.8;
-                
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                    .then(function(stream) {
-                        microphone = audioContext.createMediaStreamSource(stream);
-                        microphone.connect(analyser);
-                        
-                        // Setup JavaScript processing node
-                        javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
-                        analyser.connect(javascriptNode);
-                        javascriptNode.connect(audioContext.destination);
-                        
-                        // Process audio data
-                        javascriptNode.onaudioprocess = analyzeAudio;
-                        
-                        // Start visualization
-                        visualize();
-                        
-                        isListening = true;
-                        startButton.disabled = true;
-                        stopButton.disabled = false;
-                        updateStatus('Listening for baby cries...', false);
-                    })
-                    .catch(function(err) {
-                        updateStatus('Could not access microphone: ' + err.message, true);
-                    });
-            }
-            
-            // Stop audio detection
-            function stopAudioDetection() {
-                if (javascriptNode) {
-                    javascriptNode.onaudioprocess = null;
-                    javascriptNode.disconnect();
-                    analyser.disconnect();
-                    microphone.disconnect();
-                    cancelAnimationFrame(animationId);
-                    
-                    isListening = false;
-                    startButton.disabled = false;
-                    stopButton.disabled = true;
-                    updateStatus('Monitoring stopped', false);
-                    cryAlert.classList.remove('active');
-                }
-            }
-            
-            // Analyze audio for baby cry patterns
-            function analyzeAudio(event) {
-                const bufferLength = analyser.frequencyBinCount;
-                const dataArray = new Uint8Array(bufferLength);
-                analyser.getByteFrequencyData(dataArray);
-                
-                // Focus on specific frequency ranges for baby cries
-                const range = frequencyRanges[selectedRange];
-                
-                // Convert frequency to array index (rough approximation)
-                const lowIndex = Math.floor(range.low * bufferLength / (audioContext.sampleRate / 2));
-                const highIndex = Math.floor(range.high * bufferLength / (audioContext.sampleRate / 2));
-                
-                // Analyze energy in the frequency range of interest
-                let sum = 0;
-                for (let i = lowIndex; i < highIndex; i++) {
-                    sum += dataArray[i];
-                }
-                
-                // Calculate average energy
-                const avg = sum / (highIndex - lowIndex);
-                const normalizedValue = avg / 255;
-                
-                // Baby cry detection based on threshold and frequency characteristics
-                if (normalizedValue > detectionThreshold) {
-                    // Look for rapid changes in amplitude (common in cries)
-                    const isPotentialCry = detectCryPattern(dataArray, lowIndex, highIndex);
-                    
-                    if (isPotentialCry) {
-                        cryDetected();
-                    } else {
-                        cryAlert.classList.remove('active');
+        } catch (error) {
+            console.error("Error sending notification:", error);
+        }
+    }
+    
+    // Handle cry detection
+    function cryDetected() {
+        cryAlert.classList.add('active');
+        
+        // Send browser notification
+        sendCryNotification();
+        
+        // Add to history
+        const now = new Date();
+        const timeString = now.toLocaleTimeString();
+        const historyItem = document.createElement('div');
+        historyItem.className = 'history-item';
+        historyItem.innerHTML = `
+            <span>Cry detected</span>
+            <span>${timeString}</span>
+        `;
+        detectionHistory.prepend(historyItem);
+        
+        // Limit history items
+        if (detectionHistory.children.length > 10) {
+            detectionHistory.removeChild(detectionHistory.lastChild);
+        }
+    }
+    
+    // Add a manual test button for notifications
+    const testButton = document.createElement('button');
+    testButton.textContent = 'Test Notification';
+    testButton.style.marginTop = '10px';
+    testButton.addEventListener('click', function() {
+        if ("Notification" in window) {
+            if (Notification.permission === "granted") {
+                sendTestNotification();
+            } else {
+                Notification.requestPermission().then(function(permission) {
+                    if (permission === "granted") {
+                        sendTestNotification();
                     }
-                } else {
-                    cryAlert.classList.remove('active');
-                }
+                });
             }
+        }
+    });
+    document.querySelector('.controls').appendChild(testButton);
+    
+    // Visualize audio
+    function visualize() {
+        const WIDTH = canvas.width;
+        const HEIGHT = canvas.height;
+        
+        canvasContext.clearRect(0, 0, WIDTH, HEIGHT);
+        
+        function draw() {
+            animationId = requestAnimationFrame(draw);
             
-            // Simple pattern detection algorithm for baby cries
-            function detectCryPattern(dataArray, lowIndex, highIndex) {
-                // Count peaks in the frequency range
-                let peakCount = 0;
-                let isRising = false;
+            const bufferLength = analyser.frequencyBinCount;
+            const dataArray = new Uint8Array(bufferLength);
+            
+            analyser.getByteFrequencyData(dataArray);
+            
+            canvasContext.fillStyle = 'rgb(245, 245, 245)';
+            canvasContext.fillRect(0, 0, WIDTH, HEIGHT);
+            
+            const barWidth = (WIDTH / bufferLength) * 2.5;
+            let x = 0;
+            
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = dataArray[i] / 255 * HEIGHT;
                 
-                for (let i = lowIndex + 1; i < highIndex; i++) {
-                    if (!isRising && dataArray[i] > dataArray[i-1] + 10) {
-                        isRising = true;
-                    } else if (isRising && dataArray[i] < dataArray[i-1] - 10) {
-                        peakCount++;
-                        isRising = false;
-                    }
-                }
+                // Color based on frequency
+                const h = i / bufferLength * 360;
+                canvasContext.fillStyle = `hsl(${h}, 70%, 60%)`;
                 
-                // Baby cries often have multiple peaks in the frequency domain
-                return peakCount >= 3;
+                canvasContext.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
+                
+                x += barWidth + 1;
             }
-            
-            // Handle cry detection
-            function cryDetected() {
-                cryAlert.classList.add('active');
-                
-                // Add to history
-                const now = new Date();
-                const timeString = now.toLocaleTimeString();
-                const historyItem = document.createElement('div');
-                historyItem.className = 'history-item';
-                historyItem.innerHTML = `
-                    <span>Cry detected</span>
-                    <span>${timeString}</span>
-                `;
-                detectionHistory.prepend(historyItem);
-                
-                // Limit history items
-                if (detectionHistory.children.length > 10) {
-                    detectionHistory.removeChild(detectionHistory.lastChild);
-                }
-            }
-            
-            // Visualize audio
-            function visualize() {
-                const WIDTH = canvas.width;
-                const HEIGHT = canvas.height;
-                
-                canvasContext.clearRect(0, 0, WIDTH, HEIGHT);
-                
-                function draw() {
-                    animationId = requestAnimationFrame(draw);
-                    
-                    const bufferLength = analyser.frequencyBinCount;
-                    const dataArray = new Uint8Array(bufferLength);
-                    
-                    analyser.getByteFrequencyData(dataArray);
-                    
-                    canvasContext.fillStyle = 'rgb(245, 245, 245)';
-                    canvasContext.fillRect(0, 0, WIDTH, HEIGHT);
-                    
-                    const barWidth = (WIDTH / bufferLength) * 2.5;
-                    let x = 0;
-                    
-                    for (let i = 0; i < bufferLength; i++) {
-                        const barHeight = dataArray[i] / 255 * HEIGHT;
-                        
-                        // Color based on frequency
-                        const h = i / bufferLength * 360;
-                        canvasContext.fillStyle = `hsl(${h}, 70%, 60%)`;
-                        
-                        canvasContext.fillRect(x, HEIGHT - barHeight, barWidth, barHeight);
-                        
-                        x += barWidth + 1;
-                    }
-                }
-                
-                draw();
-            }
-            
-            // Update status message
-            function updateStatus(message, isError) {
-                statusElement.textContent = message;
-                statusElement.style.color = isError ? '#ff6b6b' : '#333';
-            }
-            
-            // Handle visibility change (pause when tab is not visible)
-            document.addEventListener('visibilitychange', function() {
-                if (document.hidden && isListening) {
-                    updateStatus('Paused (app in background)', false);
-                } else if (isListening) {
-                    updateStatus('Listening for baby cries...', false);
-                }
-            });
-            
-            // Resize canvas to match container
-            function resizeCanvas() {
-                canvas.width = canvas.offsetWidth;
-                canvas.height = canvas.offsetHeight;
-            }
-            
-            window.addEventListener('resize', resizeCanvas);
-            resizeCanvas();
-        });
+        }
+        
+        draw();
+    }
+    
+    // Update status message
+    function updateStatus(message, isError) {
+        statusElement.textContent = message;
+        statusElement.style.color = isError ? '#ff6b6b' : '#333';
+    }
+    
+    // Resize canvas to match container
+    function resizeCanvas() {
+        canvas.width = canvas.offsetWidth;
+        canvas.height = canvas.offsetHeight;
+    }
+    
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+});
     </script>
 </body>
 </html>
