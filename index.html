@@ -183,7 +183,7 @@
         </div>
         
         <div class="history">
-            <h3>Detection History</h3>
+            <h3>Detection History </h3>
             <div id="detectionHistory"></div>
         </div>
     </div>
@@ -210,16 +210,21 @@ document.addEventListener('DOMContentLoaded', function() {
     let lastNotificationTime = 0;
     const notificationCooldown = 5000; // 5 seconds between notifications
     
-    // Configuration
-    let sensitivity = 6;
-    let detectionThreshold = 0.5 + (sensitivity * 0.05);
-    let frequencyRanges = {
-        narrow: { low: 1000, high: 2000 },  // Focus on typical baby cry frequency
-        wide: { low: 400, high: 3000 },     // Wider range for various cry types
-        custom: { low: 300, high: 4000 }    // Custom range
-    };
-    let selectedRange = 'wide';
+// Configuration with increased sensitivity
+let sensitivity = 8; // Increased from 6 to 8 as default
+let detectionThreshold = 0.4 + (sensitivity * 0.04); // Lower base threshold (0.4 instead of 0.5)
+let frequencyRanges = {
+    narrow: { low: 800, high: 2200 },  // Expanded narrow range
+    wide: { low: 300, high: 4000 },    // Wider detection range
+    custom: { low: 200, high: 5000 }   // Even wider custom range
+};
+let selectedRange = 'wide';
     
+// Update sensitivity slider range
+sensitivitySlider.min = 1;
+sensitivitySlider.max = 12; // Increased max sensitivity
+sensitivitySlider.value = sensitivity;
+sensitivityValue.textContent = sensitivity;
     // Check if service worker is supported for mobile notifications
     if ('serviceWorker' in navigator) {
         navigator.serviceWorker.register('sw.js').then(function(registration) {
@@ -229,13 +234,12 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Update sensitivity value display
-    sensitivitySlider.addEventListener('input', function() {
-        sensitivity = parseInt(this.value);
-        sensitivityValue.textContent = sensitivity;
-        detectionThreshold = 0.5 + (sensitivity * 0.05);
-    });
-    
+// Update sensitivity value display with more sensitive formula
+sensitivitySlider.addEventListener('input', function() {
+    sensitivity = parseInt(this.value);
+    sensitivityValue.textContent = sensitivity;
+    detectionThreshold = 0.4 + (sensitivity * 0.04); // More sensitive formula
+});
     // Update frequency range
     frequencyRangeSelect.addEventListener('change', function() {
         selectedRange = this.value;
@@ -357,24 +361,24 @@ document.addEventListener('DOMContentLoaded', function() {
         }
     }
     
-    // Simple pattern detection algorithm for baby cries
     function detectCryPattern(dataArray, lowIndex, highIndex) {
-        // Count peaks in the frequency range
-        let peakCount = 0;
-        let isRising = false;
-        
-        for (let i = lowIndex + 1; i < highIndex; i++) {
-            if (!isRising && dataArray[i] > dataArray[i-1] + 10) {
-                isRising = true;
-            } else if (isRising && dataArray[i] < dataArray[i-1] - 10) {
-                peakCount++;
-                isRising = false;
-            }
+    // Count peaks in the frequency range
+    let peakCount = 0;
+    let isRising = false;
+    
+    for (let i = lowIndex + 1; i < highIndex; i++) {
+        // Reduced threshold for what counts as a significant change (8 instead of 10)
+        if (!isRising && dataArray[i] > dataArray[i-1] + 8) {
+            isRising = true;
+        } else if (isRising && dataArray[i] < dataArray[i-1] - 8) {
+            peakCount++;
+            isRising = false;
         }
-        
-        // Baby cries often have multiple peaks in the frequency domain
-        return peakCount >= 3;
     }
+    
+    // Require fewer peaks to trigger detection (2 instead of 3)
+    return peakCount >= 2;
+}
     
     // Send browser notification
     function sendNotification() {
